@@ -1,4 +1,5 @@
 """Enthält die visuellen Aspekte der App.
+# nicht up-to-date
 
 Classes / Methods:
     Window(tk.Tk)
@@ -19,8 +20,13 @@ Classes / Methods:
 
 """
 
+# REFACTOR: Nach dem MVC Model müssten zumindest die Button-commands in ein
+# eigenes Modul kommen, da sie die Daten am ehesten verändern.
+
 import tkinter as tk
 import typing
+import logic
+
 
 # IDEA: Singleton per metaclass hook verwendbar machen.
 # Sollte aber vlt abgelehnt werden wegen der Simplicity Regel.
@@ -57,7 +63,8 @@ import typing
 
 class Window(tk.Tk):
     """Stellt das root Window der App dar.
-    Wird als Singleton verwendet.
+    Wird als Singleton verwendet. Window()() kann als shorthand für
+    get_instance() verwendet werden.
 
     """
     __instance = None
@@ -86,6 +93,9 @@ class Window(tk.Tk):
 
         self.__initialized = True
 
+    def __call__(self, *args, **kwargs):
+        return self.get_instance()
+
     @staticmethod
     def get_instance():
         """Gibt das Singleton-object zurück.
@@ -102,22 +112,21 @@ class Window(tk.Tk):
         """Vorkonfiguriert hiervon erbende tk.Frame-like Klassen.
 
         """
+
         def __init__(self, master, name, *args, **kwargs) -> None:
             __config = {
-                      }
+            }
 
             super().__init__(master, __config, *args, **kwargs)
             if not isinstance(self, ControlPage):
-                print('with ', name, self)
-                res = ControlPage.update_pages(name, self)
-                print('updated', res)
+                ControlPage.update_pages(name, self)
             self.widgetName = name
             self.master = master
 
 
 class ControlPage(Window.Page):
     """Dient als controller für die restlichen Pages (äq. zu Frames).
-    Wird als Singleton verwendet. ControlPage()() kann als shorthand für
+    Wird als Singleton verwendet. ControlPage(...)() kann als shorthand für
     get_instance() verwendet werden.
 
     """
@@ -160,7 +169,7 @@ class ControlPage(Window.Page):
     @staticmethod
     def get_page(key: str = None) -> Window.Page | dict:
         """Falls die gesuchte Seite nicht zurückgegeben werden konnte,
-        wird stattdessen das Dictionary als Ganzes zurückgegeben.
+        wird stattdessen das Dictionary als Fallback zurückgegeben.
 
         """
         try:
@@ -181,7 +190,9 @@ class MainPage(Window.Page):
     """Stellt die Hauptseite der Anwendung dar.
 
     """
-    def __init__(self, master: ControlPage, name='main', *args, **kwargs) -> None:
+
+    def __init__(self, master: ControlPage, name='main', *args,
+                 **kwargs) -> None:
         super().__init__(master, name=name, *args, **kwargs)
         self.configure(bg='#fcf6bd')
         self.place(relheight=1.0, relwidth=1.0)
@@ -225,33 +236,135 @@ class MainPage(Window.Page):
 
         """
         ControlPage.get_page('config').tkraise()
-            
+
 
 class GamePage(Window.Page):
     """Stellt die Spielseite der Anwendung dar.
 
     """
-    def __init__(self, master: ControlPage, name='game', *args, **kwargs) -> None:
+
+    def __init__(self, master: ControlPage, name='game', *args,
+                 **kwargs) -> None:
         super().__init__(master, name=name, *args, **kwargs)
         self.configure(bg='#d0f4de')
         self.place(relheight=1.0, relwidth=1.0)
 
-        label = tk.Label(self, text='"Wie wär\'s mit einem Spiel?"', bg='#d0f4de')
-        label.pack()
-        entry = tk.Entry(self, bg='#e4c1f9')
-        entry.pack()
+        # initialisiert ein neues Spiel.
+        self.game = logic.Game()
+        print(f'{self.game.number}')    # debug
 
-        b_names = ['Zurück']
+        # IDEA: trace_add() sollte eigentlich besser funktionieren können,
+        # um das Label dynamisch updaten zu können.
+
+        # output-Label setup
+        self.dialog = tk.Label(self, bg='#d0f4de')
+        start_text = self.game.get_next_dialog(self.game.gen_start)
+
+        self.dialog_text_var = tk.StringVar(self.dialog)
+        self.dialog_text_var.initialize(start_text)
+
+        self.dialog.configure(textvariable=self.dialog_text_var)
+        self.dialog.pack()
+
+        # input-Entry setup
+        self.entry = tk.Entry(self,
+                              bg='#e4c1f9',
+                              validate='focusout',
+                              validatecommand=self.forward)
+
+        self.entry_text_var = tk.StringVar(self.entry)
+
+        self.entry.configure(textvariable=self.entry_text_var)
+        self.entry.focus()
+        self.entry.pack()
+
+        # button setup
+        b_names = ['Weiter', 'Zurück']
         b_dict: typing.Dict[str, tk.Button] = {}
 
         for i in b_names:
             b_dict |= {i: tk.Button(self, text=i, bg='#e4c1f9')}
             b_dict[i].pack()
 
+        b_dict['Weiter'].configure(command=self.toggle_entry_state)
         b_dict['Zurück'].configure(command=self.back)
 
+    def toggle_entry_state(self) -> None:
+        """Wechselt den Zustand des Entry-widgets 'normal' <=> 'disabled'.
+        Ändert auch den Fokus vom Entry, um dessen command zu triggern.
+
+        """
+        state: str = self.entry.cget('state')
+        match state:
+            case 'disabled':
+                self.entry.configure(state='normal')
+                self.entry.focus()
+
+            case 'normal':
+                self.entry.configure(state='disabled')
+                self.dialog.focus()
+
+            case _:
+                pass
+
+    def forward(self) -> bool:
+        """Bringt den game-state voran, indem die Eingabe weitergegeben wird.
+
+        """
+        if self.check_and_notify():
+            val = int(self.entry_text_var.get())
+            res = self.game.get_dialog_text(val)
+            # TODO: Hier gehört ein Debug-schalter hin und sowieso ein Logger.
+            if self.game.is_win:
+                res = f'{res} Punkte: {self.game.score_total}'
+            self.dialog_text_var.set(res)
+            return True
+        return False
+
+    def check_and_notify(self) -> bool:
+        """Validiert den Entry-text und ändert das Dialog-Label.
+
+        True:
+            Input ist korrekt und kann weiter verarbeitet werden.
+        False:
+            Input ist fehlerhaft und Benachrichtigung ist erfolgt.
+
+        """
+        def is_valid_input() -> bool:
+            """Validiert den Entry-text.
+
+            """
+            text_in = self.entry_text_var.get()
+            if text_in.startswith('-') or not text_in.isdecimal():
+                return False
+            return True
+
+        def notify() -> bool:
+            """Ändert das Dialog-Label.
+
+            """
+            self.dialog_text_var.set(
+                'Bitte gebe eine positive, ganze Zahl ein. ')
+            # Penalty für falsche Eingaben.
+            self.game.turn += 1
+            return True
+
+        res = not is_valid_input() and notify()
+        return not res
+
+    def update_dialog(self, gen: typing.Generator = None,
+                      is_skip=False,
+                      skip_count=1) -> None:
+        """Updated das Dialog-Label mit neuem Dialog-Inhalt. Ohne Angabe wird
+        gen_start als Generator verwendet.
+
+        """
+        gen_ = gen or self.game.gen_start
+        sv: tk.StringVar() = self.dialog.cget('textvariable')
+        sv.set(self.game.get_next_dialog(gen_, is_skip, skip_count))
+
     @staticmethod
-    def back():
+    def back() -> None:
         """Wechselt zur Hauptseite.
 
         """
@@ -262,7 +375,9 @@ class ScorePage(Window.Page):
     """Stellt die Leaderboard-seite der Anwendung dar.
 
     """
-    def __init__(self, master: ControlPage, name='score', *args, **kwargs) -> None:
+
+    def __init__(self, master: ControlPage, name='score', *args,
+                 **kwargs) -> None:
         super().__init__(master, name=name, *args, **kwargs)
         self.configure(bg='#ff99c8')
         self.place(relheight=1.0, relwidth=1.0)
@@ -277,7 +392,7 @@ class ScorePage(Window.Page):
         b_dict['Zurück'].configure(command=self.back)
 
     @staticmethod
-    def back():
+    def back() -> None:
         """Wechselt zur Hauptseite.
 
         """
@@ -288,7 +403,9 @@ class ConfigPage(Window.Page):
     """Stellt die Config-seite der Anwendung dar.
 
     """
-    def __init__(self, master: ControlPage, name='config', *args, **kwargs) -> None:
+
+    def __init__(self, master: ControlPage, name='config', *args,
+                 **kwargs) -> None:
         super().__init__(master, name=name, *args, **kwargs)
         self.configure(bg='#a9def9')
         self.place(relheight=1.0, relwidth=1.0)
@@ -303,15 +420,37 @@ class ConfigPage(Window.Page):
         b_dict['Zurück'].configure(command=self.back)
 
     @staticmethod
-    def back():
+    def back() -> None:
         """Wechselt zur Hauptseite.
 
         """
         ControlPage.get_page('main').tkraise()
 
-# colors:
+# COLORS:
 # pink ff99c8 score
 # yellow fcf6bd main
 # lime d0f4de game
 # blue a9def9 config
 # purple e4c1f9 button
+
+# IDEA: alternierende Funktionsaufrufe für Button-command-lambdas..
+# def foo(i: int, *args, **kwargs):
+#     i_ = i
+#     print(f'foo args: {i_}')
+#
+#
+# def bar(k: str, *args, **kwargs):
+#     k_ = k
+#     print(f'bar args: {k_}')
+#
+#
+# def foobar() -> typing.Generator:
+#     list_: list[typing.Callable] = [foo, bar]
+#     while True:
+#         for i in list_:
+#             yield i
+#
+#
+# gen = foobar()
+# gen.__next__()(i=45, k='dasd')
+# gen.__next__()(i=77, k='dasasdasd')

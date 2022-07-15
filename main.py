@@ -3,8 +3,6 @@
 """
 
 import ui
-import logic
-
 
 def main():
     """main
@@ -12,7 +10,6 @@ def main():
     """
     root = ui.Window()
     control = ui.ControlPage(root).get_instance()
-    print(control.get_page())
 
     page4 = ui.ConfigPage(control)
     page3 = ui.ScorePage(control)
